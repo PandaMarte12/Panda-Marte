@@ -1,0 +1,174 @@
+# Asegura estar en la raíz del repo
+pwd
+
+# Inicializa proyecto Node
+npm init -y
+
+# Instala Jest y reporter JUnit (para reportes)
+npm i -D jest jest-junit
+
+"scripts": {
+  "test": "jest --ci",
+  "test:coverage": "jest --coverage"
+}
+
+module.exports = {
+  testEnvironment: "node",
+  reporters: [
+    "default",
+    ["jest-junit", { outputDirectory: "reports", outputName: "junit.xml" }]
+  ],
+  collectCoverage: true,
+  coverageDirectory: "coverage",
+  coverageReporters: ["text", "lcov"]
+};
+
+function suma(a, b) {
+  return a + b;
+}
+module.exports = { suma };
+
+const { suma } = require('../src/suma');
+
+test('suma 2 + 3 = 5', () => {
+  expect(suma(2, 3)).toBe(5);
+});
+
+npm test
+npm run test:coverage
+
+mkdir -p .github/workflows
+
+name: CI - Node (Jest)
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Pruebas (Jest con JUnit)
+        run: npm test
+
+      - name: Subir artefactos (reportes y cobertura)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: |
+            reports/**
+            coverage/**
+
+git add .
+git commit -m "CI: pipeline de pruebas automatizadas (Node + Jest)"
+git push origin main
+
+      - name: Notificar por Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": "*CI ${{
+                github.repository
+              }}* → *${{ job.status }}*\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+flowchart LR
+    A[Evento de disparo<br/>push / PR / manual] --> B[Checkout del repo]
+    B --> C[Configuración del entorno<br/>(Node v20)]
+    C --> D[Instalar dependencias]
+    D --> E[Ejecutar pruebas automatizadas<br/>Jest]
+    E --> F{¿Pruebas OK?}
+    F -- Sí --> G[Generar reportes y cobertura]
+    F -- No --> G
+    G --> H[Publicar artefactos<br/>(reports, coverage)]
+    H --> I[Notificaciones (Slack/Email)]
+
+name: CI - Python (pytest)
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pytest pytest-cov
+
+      - name: Pruebas + cobertura
+        run: pytest -q --junitxml=reports/junit.xml --cov=. --cov-report=xml:coverage.xml
+
+      - name: Artefactos
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-reports
+          path: |
+            reports/**
+            coverage.xml
+
+name: CI - APIs (Postman/Newman)
+
+on:
+  push: { branches: [ "main", "develop" ] }
+  pull_request: { branches: [ "main", "develop" ] }
+  workflow_dispatch:
+
+jobs:
+  newman:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+
+      - name: Instalar newman
+        run: npm i -g newman newman-reporter-htmlextra
+
+      - name: Ejecutar colección
+        run: |
+          newman run postman/collection.json \
+            --environment postman/environment.json \
+            --reporters cli,htmlextra \
+            --reporter-htmlextra-export reports/newman.html
+
+      - name: Artefactos
+        uses: actions/upload-artifact@v4
+        with:
+          name: newman-report
+          path: reports/**
